@@ -308,9 +308,9 @@ class SourceReader(object):
                 raise RuntimeError("no data for calexp_md %s" % (dataId))
 
             calexp_md = dataRef.get("calexp_md", immediate=True)
-            calexp = dataRef.get("calexp", immediate=True)
+            detector = dataRef.get("camera")[dataRef.dataId["ccd"]]  # OK for HSC; maybe not for other cameras
             wcs = afwImage.makeWcs(calexp_md)
-            nQuarter = calexp.getDetector().getOrientation().getNQuarter()
+            nQuarter = detector.getOrientation().getNQuarter()
             sources = dataRef.get("src", immediate=True, flags=afwTable.SOURCE_IO_NO_FOOTPRINTS)
 
             # Check if we are looking at HSC stack outputs: if so, no pixel rotation of sources is
@@ -318,8 +318,8 @@ class SourceReader(object):
             hscRun = mosaicUtils.checkHscStack(calexp_md)
             if hscRun is None:
                 if nQuarter%4 != 0:
-                    sources = mosaicUtils.rotatePixelCoords(sources, calexp.getWidth(), calexp.getHeight(),
-                                                            nQuarter)
+                    sources = mosaicUtils.rotatePixelCoords(sources, calexp_md.get("NAXIS1"),
+                                                            calexp_md.get("NAXIS2"), nQuarter)
 
             # Set the aliap map for the source catalog
             if self.config.srcSchemaMap is not None and hscRun is not None:
@@ -543,9 +543,11 @@ class MosaicTask(pipeBase.CmdLineTask):
             params.append((sourceReader, dataRef))
 
         if numCoresForReadSource > 1:
-            pool = multiprocessing.Pool(processes=numCoresForReadSource)
+            pool = multiprocessing.Pool(processes=numCoresForReadSource, maxtasksperchild=1)
             worker = Worker()
             resultList = pool.map_async(worker, params).get(readTimeout)
+            pool.close()
+            pool.join()
         else:
             resultList = list()
             for p in params:
@@ -572,6 +574,8 @@ class MosaicTask(pipeBase.CmdLineTask):
                     if dataRef.dataId == dataId:
                         dataRefListUsed.append(dataRef)
 
+        sourceSet.reserve(len(ssVisit))
+        matchList.reserve(len(ssVisit))
         for visit in ssVisit.keys():
             sourceSet.push_back(ssVisit[visit])
             matchList.push_back(mlVisit[visit])
